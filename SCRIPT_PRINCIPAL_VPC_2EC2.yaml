@@ -1,0 +1,282 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Crear una VPC con subredes públicas y privadas, NAT Gateway, S3 Gateway, dos instancias EC2, y configuraciones de enrutamiento. Todos los recursos heredarán el nombre base del VPC.
+
+Parameters:
+  VPCName:
+    Type: String
+    Description: Nombre base para la VPC y todos los recursos relacionados
+    Default: MyVPC
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref VPCName
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-igw"
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-subnet-public1-us-east-1a"
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-subnet-private1-us-east-1a"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-subnet-public2-us-east-1b"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-subnet-private2-us-east-1b"
+
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-rtb-public"
+
+  RoutePublic:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociationPublic1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref RouteTablePublic
+
+  SubnetRouteTableAssociationPublic2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref RouteTablePublic
+
+  RouteTablePrivate1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-rtb-private1-us-east-1a"
+
+  RouteTablePrivate2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-rtb-private2-us-east-1b"
+
+  SubnetRouteTableAssociationPrivate1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref RouteTablePrivate1
+
+  SubnetRouteTableAssociationPrivate2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref RouteTablePrivate2
+
+  EIPNatGateway:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-eip-nat"
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIPNatGateway.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-nat-gateway"
+
+  RoutePrivate1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  RoutePrivate2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  GatewayS3:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: com.amazonaws.us-east-1.s3
+      VpcId: !Ref VPC
+      RouteTableIds:
+        - !Ref RouteTablePublic
+        - !Ref RouteTablePrivate1
+        - !Ref RouteTablePrivate2
+      VpcEndpointType: Gateway
+
+  GSWebServer:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH and HTTP access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-WebServerSG"
+
+  GSWeblocal:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH and HTTP access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-WeblocalSG"
+
+  WebServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroupIds:
+        - !Ref GSWebServer
+      KeyName: vockey
+      ImageId: ami-0ae8f15ae66fe8cda
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y aws-cli
+          dnf install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+          echo '<html><h1>Hola Mundo ACR 2024!</h1></html>' > /var/www/html/index.html
+
+  WebLocal:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroupIds:
+        - !Ref GSWeblocal
+      KeyName: vockey
+      ImageId: ami-0ae8f15ae66fe8cda
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y aws-cli
+          dnf install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+          echo '<html><h1>Hola Mundo ACR 2024!</h1></html>' > /var/www/html/index.html
+
+Outputs:
+  VPCID:
+    Description: ID de la VPC creada
+    Value: !Ref VPC
+  PublicSubnets:
+    Description: IDs de las subredes públicas
+    Value: !Join [", ", [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+  PrivateSubnets:
+    Description: IDs de las subredes privadas
+    Value: !Join [", ", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+  RouteTables:
+    Description: IDs de las tablas de enrutamiento
+    Value: !Join [", ", [!Ref RouteTablePublic, !Ref RouteTablePrivate1, !Ref RouteTablePrivate2]]
+  InternetGatewayID:
+    Description: ID del Internet Gateway
+    Value: !Ref InternetGateway
+  S3VPCEndpointID:
+    Description: ID del VPC Endpoint para S3
+    Value: !Ref GatewayS3
+  NATGatewayID:
+    Description: ID del NAT Gateway
+    Value: !Ref NATGateway
+  PublicInstanceId:
+    Description: ID de la instancia EC2 pública
+    Value: !Ref WebServer
+  PrivateInstanceId:
+    Description: ID de la instancia EC2 privada
+    Value: !Ref WebLocal

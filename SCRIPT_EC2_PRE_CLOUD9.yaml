@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create an EC2 instance with Cloud9 setup, Docker installed, and a single, restricted security group on Amazon Linux 2023.
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+    Description: Tipo de instancia EC2 para el entorno Cloud9
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nombre de la clave SSH para acceder a la instancia
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: ID de la subred para la instancia Cloud9
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: ID de la VPC donde se lanzará la instancia
+
+Resources:
+  GrupoSecCloud09:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Cloud9 instance with specific ports open
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  # SSH
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0  # HTTP
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0  # HTTPS
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0  # PostgreSQL
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0  # MySQL
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8090
+          CidrIp: 0.0.0.0/0  # Custom Ports for Application
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0  # Allow all outbound traffic
+
+  Cloud9Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref GrupoSecCloud09  # Only this security group is attached
+      IamInstanceProfile: LabInstanceProfile
+      ImageId: ami-066784287e358dad1  # Amazon Linux 2023 AMI ID
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo dnf update -y
+          sudo dnf install -y docker
+          sudo systemctl start docker
+          sudo systemctl enable docker
+          sudo usermod -aG docker ec2-user
+          sudo dnf install -y python3.11
+          sudo dnf install -y python3-pip  # Instalación de python3-pip
+          sudo dnf install -y awscli
+          curl -sL https://rpm.nodesource.com/setup_14.x | sudo bash -
+          sudo dnf install -y nodejs
+          sudo dnf install -y jq
+          sudo npm install -g aws-cdk typescript
+          sudo chown -R ec2-user:ec2-user /home/ec2-user
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Cloud9"
+
+Outputs:
+  Cloud9InstanceId:
+    Description: The Instance ID of the Cloud9 EC2 instance
+    Value: !Ref Cloud9Instance
+  Cloud9URL:
+    Description: URL to access the Cloud9 IDE
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloud9/ide/${Cloud9Instance}"

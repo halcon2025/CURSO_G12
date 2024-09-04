@@ -1,0 +1,132 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template to create an EC2 instance configured as a DNS server with Webmin for web-based management on Amazon Linux 2023.
+
+Parameters:
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: ID of the VPC where the instance will be created
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet ID where the instance will be created
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 instance type
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+    ConstraintDescription: Must be a valid EC2 instance type.
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance.
+  DNSDomainName:
+    Type: String
+    Default: midnsancon.line.pm
+    Description: The domain name for the DNS server.
+
+Resources:
+  DNSInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable DNS server and Webmin access
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 10000
+          ToPort: 10000
+          CidrIp: 0.0.0.0/0
+
+  DNSInstance:
+    Type: AWS::EC2::Instance
+    Properties: 
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref DNSInstanceSecurityGroup
+      ImageId: ami-066784287e358dad1 # AMI actualizada para Amazon Linux 2023
+      UserData: 
+        Fn::Base64: 
+          !Sub |
+            #!/bin/bash
+            # Actualizar paquetes y dependencias
+            sudo dnf update -y
+            sudo dnf install -y perl wget unzip
+
+            # Instalar dependencias necesarias para Webmin
+            sudo dnf install -y perl-Net-SSLeay openssl perl-IO-Tty
+
+            # Añadir el repositorio de Webmin
+            sudo tee /etc/yum.repos.d/webmin.repo <<EOF
+            [Webmin]
+            name=Webmin Distribution Neutral
+            baseurl=https://download.webmin.com/download/yum
+            enabled=1
+            gpgcheck=1
+            gpgkey=https://download.webmin.com/jcameron-key.asc
+            EOF
+
+            # Instalar Webmin desde el repositorio oficial
+            sudo dnf install webmin -y
+
+            # Iniciar y habilitar Webmin
+            sudo systemctl start webmin
+            sudo systemctl enable webmin
+
+            # Instalar y configurar BIND
+            sudo dnf install -y bind bind-utils
+            sudo systemctl start named
+            sudo systemctl enable named
+
+            # Configuración de BIND
+            echo "options {
+              directory \"/var/named\";
+              dump-file \"/var/named/data/cache_dump.db\";
+              statistics-file \"/var/named/data/named_stats.txt\";
+              allow-query { any; };
+              forwarders { 8.8.8.8; 8.8.4.4; };
+            };
+            zone \"${DNSDomainName}\" IN {
+              type master;
+              file \"${DNSDomainName}.zone\";
+              allow-update { none; };
+            };" | sudo tee /etc/named.conf
+            echo "\$TTL 86400
+            @   IN  SOA ns1.${DNSDomainName}. admin.${DNSDomainName}. (
+                2021010101 ; Serial
+                3600       ; Refresh
+                1800       ; Retry
+                1209600    ; Expire
+                86400 )    ; Minimum TTL
+            @   IN  NS  ns1.${DNSDomainName}.
+            ns1 IN  A   $(curl http://169.254.169.254/latest/meta-data/local-ipv4)
+            www IN  A   $(curl http://169.254.169.254/latest/meta-data/local-ipv4)" | sudo tee /var/named/${DNSDomainName}.zone
+
+            # Reiniciar BIND para aplicar cambios
+            sudo systemctl restart named
+
+            echo "Webmin installed. Access it at https://$(curl http://169.254.169.254/latest/meta-data/public-ipv4):10000"
+
+Outputs:
+  DNSInstancePublicIP:
+    Description: The public IP address of the DNS server
+    Value: !GetAtt DNSInstance.PublicIp
+  DNSInstanceID:
+    Description: The Instance ID of the DNS server
+    Value: !Ref DNSInstance
+  WebminURL:
+    Description: URL to access Webmin for DNS management
+    Value: !Sub "https://${DNSInstance.PublicIp}:10000"
