@@ -1,0 +1,39 @@
+# Stage 1: Build Stage
+FROM amazonlinux:2 AS builder
+
+# Actualizar el sistema e instalar Apache, PHP, unzip, curl
+RUN yum update -y && \
+    yum install -y httpd php unzip curl
+
+# Descargar el archivo lab-app2.zip desde GitHub
+RUN curl -L -o /tmp/lab-app2.zip https://github.com/halcon2025/stress/raw/main/lab-app2.zip
+
+# Verificar que el archivo se haya descargado correctamente
+RUN if [ ! -f /tmp/lab-app2.zip ]; then echo "Error: Archivo .zip no encontrado!"; exit 1; fi
+
+# Descomprimir el archivo
+RUN unzip /tmp/lab-app2.zip -d /var/www/html/ && \
+    chown -R apache:apache /var/www/html/ && \
+    chmod -R 755 /var/www/html/ && \
+    rm -f /tmp/lab-app2.zip  # Limpiar archivo descargado
+
+# Stage 2: Final Stage
+FROM amazonlinux:2
+
+# Instalar Apache y PHP
+RUN yum update -y && \
+    yum install -y httpd php && \
+    yum clean all
+
+# Copiar la aplicación web descomprimida desde el build stage
+COPY --from=builder /var/www/html/ /var/www/html/
+
+# Asegurarse de que Apache tenga los permisos correctos
+RUN chown -R apache:apache /var/www/html/ && \
+    chmod -R 755 /var/www/html/
+
+# Exponer el puerto 80
+EXPOSE 80
+
+# Ejecutar Apache en primer plano
+CMD ["/usr/sbin/httpd", "-D", "FOREGROUND"]
