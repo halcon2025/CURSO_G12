@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cpu-stress-app
+spec:
+  replicas: 50
+  selector:
+    matchLabels:
+      app: cpu-stress-app
+  template:
+    metadata:
+      labels:
+        app: cpu-stress-app
+    spec:
+      containers:
+      - name: cpu-stress-app
+        image: 630500291009.dkr.ecr.us-east-1.amazonaws.com/cpu-stress-app:v4
+        ports:
+        - containerPort: 5000
+        resources:
+          requests:
+            cpu: "800m"
+          limits:
+            cpu: "2000m"
+
